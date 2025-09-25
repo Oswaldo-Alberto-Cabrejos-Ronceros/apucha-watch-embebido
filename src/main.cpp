@@ -1,18 +1,109 @@
 #include <Arduino.h>
+#include <Adafruit_SSD1306.h>
+#include <Adafruit_GFX.h>
+#include "MAX30105.h"         // Para MAX30102 (usa misma librería)
+#include "Adafruit_MPU6050.h" // Librería MPU6050
+#include <TinyGPSPlus.h>      // GPS
+#include <HardwareSerial.h>   // UART para GPS y SIM800L
+#include <DFRobotDFPlayerMini.h>
 
-// put function declarations here:
-int myFunction(int, int);
+// configuraciones para pantalla
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+MAX30105 particleSensor;     // Sensor de pulso
+Adafruit_MPU6050 mpu;        // Acelerómetro/Giroscopio
+TinyGPSPlus gps;             // gps
+HardwareSerial SerialGPS(1); // UART1 para GPS
+HardwareSerial SerialGSM(2); // UART2 para GSM
+// Pines botones
+#define BTN1 0
+#define BTN2 1
 
-void setup() {
-  // put your setup code here, to run once:
-  int result = myFunction(2, 3);
+void setup()
+{
+  // iniciar puerto serial para debug
+  Serial.begin(115200);
+  Serial.println("Iniciando sistema reloj...");
+  // intentamos buscar la pantalla
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C))
+  {
+    Serial.println("No se encontró pantalla OLED");
+    for (;;)
+      ; // bloquear si no se encuentra pantalla
+  }
+  // configuracion inicar de la pantalla
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.println("OLED OK");
+  display.display();
+
+  // configuracion de botones
+  pinMode(BTN1, INPUT_PULLUP);
+  pinMode(BTN2, INPUT_PULLUP);
+
+  // configuracion del max 30102 - pulso
+  if (!particleSensor.begin(Wire, I2C_SPEED_STANDARD))
+  {
+    Serial.println("No se encontró MAX30102");
+  }
+  else
+  {
+    Serial.println("MAX30102 OK");
+    display.println("MAX30102 OK");
+    display.display();
+    particleSensor.setup();
+  }
+
+  // configuracion del mpu--acelerometro-giroscopio
+  if (!mpu.begin())
+  {
+    Serial.println("No se encontró MPU6050");
+    while (1)
+    {
+      delay(10);
+    }
+  }
+  Serial.println("MPU6050 OK");
+  display.println("MPU6050 OK");
+  display.display();
+
+  // configurar rangos
+  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+
+  // configuracion del gps
+  SerialGPS.begin(9600, SERIAL_8N1, 4, 5); // rx tx
+  Serial.println("GPS inicializado");
+  display.println("GPS OK");
+  display.display();
+
+  // configuracion del gps
+  SerialGSM.begin(9600, SERIAL_8N1, 6, 7); // rx tx
+  Serial.println("SIM800L inicializado");
+  display.println("GSM OK");
+  display.display();
+  // configuracion del dfplayer mini
+  HardwareSerial SerialDF(1); // UART 1
+  DFRobotDFPlayerMini dfplayer;
+  SerialDF.begin(9600, SERIAL_8N1, 8, 9); // rx tx
+  delay(1000);
+  if (!dfplayer.begin(SerialDF))
+  {
+    Serial.println("DFPlayer no detectado!");
+  }
+  else
+  {
+    Serial.println("DFPlayer listo");
+    dfplayer.volume(20); // volumen inicial
+  }
+  delay(2000);
+  display.clearDisplay();
 }
-
-void loop() {
+void loop()
+{
   // put your main code here, to run repeatedly:
-}
-
-// put function definitions here:
-int myFunction(int x, int y) {
-  return x + y;
 }
