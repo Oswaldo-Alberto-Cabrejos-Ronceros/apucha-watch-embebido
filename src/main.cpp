@@ -6,17 +6,25 @@
 #include <TinyGPSPlus.h>      // GPS
 #include <HardwareSerial.h>   // UART para GPS y SIM800L
 #include <DFRobotDFPlayerMini.h>
-
+#include <ArduinoHttpClient.h>
+#include <TinyGsmClient.h>
 // configuraciones para pantalla
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
+// variables para gsm
+#define MODEM_RST 5
+#define MODEM_PWRKEY 4
+#define MODEM_POWER_ON 23
+#define MODEM_TX 27
+#define MODEM_RX 26
+#define MODEM_BAUD 9600
+
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
-MAX30105 particleSensor;       // Sensor de pulso
-Adafruit_MPU6050 mpu;          // Acelerómetro/Giroscopio
-TinyGPSPlus gps;               // gps
-HardwareSerial SerialGPS(1);   // UART1 para GPS
-                               // UART2 para GSM
-SoftwareSerial sim800(16, 17); // verificar rx tx
+MAX30105 particleSensor;     // Sensor de pulso
+Adafruit_MPU6050 mpu;        // Acelerómetro/Giroscopio
+TinyGPSPlus gps;             // gps
+HardwareSerial SerialGPS(1); // UART1 para GPS
+                             // UART2 para GSM
 // Pines botones
 #define BTN1 0
 #define BTN2 1
@@ -29,10 +37,32 @@ int8_t validSPO2;
 int32_t heartRate;
 int8_t validHeartRate;
 
+// para vinculacion
+String deviceId;
+bool vinculado = false;
+unsigned long lastCheck = 0;
+const unsigned long checkInterval = 5000;
+// configuracion de gsm
+const char apn[] = "entel.pe"; // segun operador
+const char user[] = "";
+const char pass[] = "";
+
+TinyGsm modem(Serial1);
+TinyGsmClient client(modem);
+
+// configuracion del httpclient
+const char server[] = "apucha-watch.com"; // sin http://
+const int port = 80;
+String backendUrl = "/api";
+
+HttpClient http(client, server, port);
+
 void setup()
 {
   // iniciar puerto serial para debug
   Serial.begin(115200);
+  // para gsm
+  Serial1.begin(MODEM_BAUD, SERIAL_8N1, MODEM_RX, MODEM_TX);
   Serial.println("Iniciando sistema reloj...");
   // intentamos buscar la pantalla
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C))
@@ -111,56 +141,135 @@ void setup()
     Serial.println("DFPlayer listo");
     dfplayer.volume(20); // volumen inicial
   }
+  // para chip id
+  uint64_t chipid = ESP.getEfuseMac();
+  char idStr[13];
+  sprintf(idStr, "%04X%08X", (uint16_t)(chipid >> 32), (uint32_t)chipid);
+  deviceId = String(idStr);
+  Serial.println("Device ID: " + deviceId);
+
+  // iniciamos modem
+  Serial.println("Iniciando módem...");
+  modem.restart();
+  if (!modem.waitForNetwork())
+  {
+    Serial.println("No hay red GSM");
+    return;
+  }
+  if (!modem.gprsConnect(apn, user, pass))
+  {
+    Serial.println("Fallo al conectar GPRS");
+    return;
+  }
+  Serial.println("GPRS conectado");
+
   delay(2000);
   display.clearDisplay();
 }
 void loop()
 {
-  // leemos aceleracion
-  sensors_event_t a, g, temp;
-  mpu.getEvent(&a, &g, &temp);
-  float totalAcc = sqrt(pow(a.acceleration.x, 2) +
-                        pow(a.acceleration.y, 2) +
-                        pow(a.acceleration.z, 2));
 
-  // leemos datos en crudo para sp02 y bpm
-  for (int i = 0; i < BUFFER_SIZE; i++)
+  unsigned long now = millis();
+  if (!vinculado && now - lastCheck > = checkInterval)
   {
-    while (!particleSensor.available())
+    lastCheck = now;
+    verificarVinculo();
+  }
+
+  // limpiamos pantalla
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  if (!vinculado)
+  {
+    display.println('No vinculado');
+    display.println('Codigo:');
+    display.println(deviceId);
+  }
+  else
+  {
+    // print para debug
+    Serial.println('Vinculado')
+
+        // leemos aceleracion
+        sensors_event_t a,
+        g, temp;
+    mpu.getEvent(&a, &g, &temp);
+    float totalAcc = sqrt(pow(a.acceleration.x, 2) +
+                          pow(a.acceleration.y, 2) +
+                          pow(a.acceleration.z, 2));
+
+    // leemos datos en crudo para sp02 y bpm
+    for (int i = 0; i < BUFFER_SIZE; i++)
     {
-      particleSensor.check();
+      while (!particleSensor.available())
+      {
+        particleSensor.check();
+      }
+      redBuffer[i] = particleSensor.getRed();
+      irBuffer[i] = particleSensor.getIR();
+      particleSensor.nextSample();
     }
-    redBuffer[i] = particleSensor.getRed();
-    irBuffer[i] = particleSensor.getIR();
-    particleSensor.nextSample();
+
+    // algoritmo proporcionado por sparkfun
+    //  Algoritmo de SparkFun
+    maxim_heart_rate_and_oxygen_saturation(
+        irBuffer, BUFFER_SIZE, redBuffer,
+        &spo2, &validSPO2, &heartRate, &validHeartRate);
+
+    // imprimimos para depurar
+    Serial.print("BPM: ");
+    Serial.print(heartRate);
+    Serial.print(validHeartRate ? "valido" : "no valido");
+    Serial.print(" | SpO2: ");
+    Serial.print(spo2);
+    Serial.println(validSPO2 ? "%" : " no valido");
+
+    // deteccion de caida por rangos
+    if (totalAcc < 2)
+    {
+      Serial.println("Posible caída libre detectada");
+    }
+    else if (totalAcc > 20)
+    {
+      Serial.println("Impacto detectado, enviando alerta...");
+      enviarCaidaBackend(heartRate, spo2);
+    }
+    delay(1000);
+    enviarVitalSignsBackend(heartRate, spo2)
   }
+  display.display();
 
-  // algoritmo proporcionado por sparkfun
-  //  Algoritmo de SparkFun
-  maxim_heart_rate_and_oxygen_saturation(
-      irBuffer, BUFFER_SIZE, redBuffer,
-      &spo2, &validSPO2, &heartRate, &validHeartRate);
+  delay(500);
+}
 
-  // imprimimos para depurar
-  Serial.print("BPM: ");
-  Serial.print(heartRate);
-  Serial.print(validHeartRate ? "valido" : "no valido");
-  Serial.print(" | SpO2: ");
-  Serial.print(spo2);
-  Serial.println(validSPO2 ? "%" : " no valido");
+// funcion para verificar
 
-  // deteccion de caida por rangos
-  if (totalAcc < 2)
+void verificarVinculo()
+{
+  String url = backendUrl + "/verificar" + "?deviceId=" + deviceId;
+  Serial.println("Haciendo request a: " + url);
+  http.get(url);
+
+  int statusCode = http.responseStatusCode();
+  String response = http.responseBody();
+
+  if (statusCode == 200)
   {
-    Serial.println("Posible caída libre detectada");
+    Serial.println('Respuesta:' + response);
+    if (response.indexOf("True") >= 0)
+    {
+      vinculado = true;
+    }
+    else
+    {
+      vinculado = false;
+    }
   }
-  else if (totalAcc > 20)
+  else
   {
-    Serial.println("Impacto detectado, enviando alerta...");
-    enviarCaidaBackend(heartRate, spo2);
+    Serial.println("Error HTTP: " String(statusCode);)
   }
-  delay(1000);
-  enviarVitalSignsBackend(heartRate, spo2)
+  http.stop()
 }
 
 // funcion para enviar
