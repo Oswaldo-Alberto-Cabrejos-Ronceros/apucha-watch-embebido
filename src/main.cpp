@@ -11,14 +11,23 @@
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
-MAX30105 particleSensor;     // Sensor de pulso
-Adafruit_MPU6050 mpu;        // Acelerómetro/Giroscopio
-TinyGPSPlus gps;             // gps
-HardwareSerial SerialGPS(1); // UART1 para GPS
-HardwareSerial SerialGSM(2); // UART2 para GSM
+MAX30105 particleSensor;       // Sensor de pulso
+Adafruit_MPU6050 mpu;          // Acelerómetro/Giroscopio
+TinyGPSPlus gps;               // gps
+HardwareSerial SerialGPS(1);   // UART1 para GPS
+                               // UART2 para GSM
+SoftwareSerial sim800(16, 17); // verificar rx tx
 // Pines botones
 #define BTN1 0
 #define BTN2 1
+// buffers para el calculo de spo2 bpm
+#define BUFFER_SIZE 100
+uint32_t irBuffer[BUFFER_SIZE];
+uint32_t redBuffer[BUFFER_SIZE];
+int32_t spo2;
+int8_t validSPO2;
+int32_t heartRate;
+int8_t validHeartRate;
 
 void setup()
 {
@@ -55,6 +64,8 @@ void setup()
     display.println("MAX30102 OK");
     display.display();
     particleSensor.setup();
+    particleSensor.setPulseAmplitudeRed(0x0A);
+    particleSensor.setPulseAmplitudeGreen(0);
   }
 
   // configuracion del mpu--acelerometro-giroscopio
@@ -105,5 +116,101 @@ void setup()
 }
 void loop()
 {
-  // put your main code here, to run repeatedly:
+  // leemos aceleracion
+  sensors_event_t a, g, temp;
+  mpu.getEvent(&a, &g, &temp);
+  float totalAcc = sqrt(pow(a.acceleration.x, 2) +
+                        pow(a.acceleration.y, 2) +
+                        pow(a.acceleration.z, 2));
+
+  // leemos datos en crudo para sp02 y bpm
+  for (int i = 0; i < BUFFER_SIZE; i++)
+  {
+    while (!particleSensor.available())
+    {
+      particleSensor.check();
+    }
+    redBuffer[i] = particleSensor.getRed();
+    irBuffer[i] = particleSensor.getIR();
+    particleSensor.nextSample();
+  }
+
+  // algoritmo proporcionado por sparkfun
+  //  Algoritmo de SparkFun
+  maxim_heart_rate_and_oxygen_saturation(
+      irBuffer, BUFFER_SIZE, redBuffer,
+      &spo2, &validSPO2, &heartRate, &validHeartRate);
+
+  // imprimimos para depurar
+  Serial.print("BPM: ");
+  Serial.print(heartRate);
+  Serial.print(validHeartRate ? "valido" : "no valido");
+  Serial.print(" | SpO2: ");
+  Serial.print(spo2);
+  Serial.println(validSPO2 ? "%" : " no valido");
+
+  // deteccion de caida por rangos
+  if (totalAcc < 2)
+  {
+    Serial.println("Posible caída libre detectada");
+  }
+  else if (totalAcc > 20)
+  {
+    Serial.println("Impacto detectado, enviando alerta...");
+    enviarCaidaBackend(heartRate, spo2);
+  }
+  delay(1000);
+  enviarVitalSignsBackend(heartRate, spo2)
+}
+
+// funcion para enviar
+
+void enviarVitalSignsBackend(int bpm, int spo2)
+{
+  sim800.println("AT+HTTPTERM");
+  delay(300);
+  sim800.println("AT+HTTPINIT");
+  delay(300);
+  sim800.println("AT+HTTPPARA=\"URL\",\"http://apuchawatch.com/api/vital-signs\"");
+  delay(300);
+  sim800.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
+  delay(300);
+  // json
+  String json = "{\"bpm\":" + String(bpm) + ",\"spo2\":" + String(spo2) + "}";
+  sim800.println("AT+HTTPDATA=" + String(json.length()) + ",10000");
+  delay(500);
+  sim800.println(json);
+  delay(500);
+
+  sim800.println("AT+HTTPACTION=1"); // peticion POST
+  delay(6000);
+  sim800.println("AT+HTTPREAD");
+  delay(500);
+
+  sim800.println("AT+HTTPTERM");
+}
+
+void enviarCaidaBackend(float totalAcc)
+{
+  sim800.println("AT+HTTPTERM");
+  delay(300);
+  sim800.println("AT+HTTPINIT");
+  delay(300);
+  sim800.println("AT+HTTPPARA=\"URL\",\"http://apuchawatch.com/api/vital-signs\"");
+  delay(300);
+  sim800.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
+  delay(300);
+  // json
+  String json = "{\"acc\":" + String(totalAcc) + "}";
+  sim800.println("AT+HTTPDATA=" + String(json.length()) + ",10000");
+  delay(500);
+  sim800.println(json);
+  delay(500);
+
+  sim800.println("AT+HTTPACTION=1"); // peticion POST
+  delay(6000);
+  sim800.println("AT+HTTPREAD");
+  delay(500);
+
+  sim800.println("AT+HTTPTERM");
 }
