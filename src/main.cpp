@@ -8,6 +8,9 @@
 #include <DFRobotDFPlayerMini.h>
 #include <ArduinoHttpClient.h>
 #include <TinyGsmClient.h>
+#include <time.h>
+#include <ArduinoJson.h>
+
 // configuraciones para pantalla
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
@@ -189,9 +192,15 @@ void loop()
   {
     // print para debug
     Serial.println('Vinculado')
-
-        // leemos aceleracion
-        sensors_event_t a,
+        // mostrar hora en pantalla
+        time_t now = time(NULL);
+    struct tm *timeinfo = localtime(&now);
+    char buffer[30];
+    strftime(buffer, 30, "%H:%M:%S", timeinfo);
+    Serial.println(buffer);
+    display.println(buffer);
+    // leemos aceleracion
+    sensors_event_t a,
         g, temp;
     mpu.getEvent(&a, &g, &temp);
     float totalAcc = sqrt(pow(a.acceleration.x, 2) +
@@ -256,9 +265,24 @@ void verificarVinculo()
   if (statusCode == 200)
   {
     Serial.println('Respuesta:' + response);
-    if (response.indexOf("True") >= 0)
+    // para deserializar respuesta
+    StaticJsonDocument<256> doc;
+    DeserializationError error = deserializeJson(doc, response);
+    if (error)
+    {
+      Serial.print("Error al parsear JSON: ");
+      Serial.println(error.c_str());
+      return;
+      vinculado = false;
+    }
+    //valores
+    bool vinculadoResponse = doc["vinculado"];
+    const char *hora = doc["hora"];
+    if (vinculadoResponse)
     {
       vinculado = true;
+      // sincronizar hora
+      setTimeFromServer(*hora);
     }
     else
     {
@@ -326,4 +350,21 @@ void enviarCaidaBackend(float totalAcc)
   }
 
   http.stop();
+}
+
+// funcion para configurar hora a partir de la repuesta del backend
+void setTimeFromServer(String horaServidor)
+{
+  struct tm tm;
+  if (strptime(horaServidor.c_str(), "%Y-%m-%dT%H:%M:%SZ", &tm) != NULL)
+  {
+    time_t t = mktime(&tm);
+    struct timeval tv = {.tv_sec = t, .tv_usec = 0};
+    settimeofday(&tv, NULL);
+    Serial.println("Hora sincronizada")
+  }
+  else
+  {
+    Serial.println("Error parceando la hora")
+  }
 }
