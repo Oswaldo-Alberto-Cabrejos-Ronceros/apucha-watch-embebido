@@ -272,54 +272,58 @@ void verificarVinculo()
   http.stop()
 }
 
-// funcion para enviar
+// funcion para enviar signos vitales
 
 void enviarVitalSignsBackend(int bpm, int spo2)
 {
-  sim800.println("AT+HTTPTERM");
-  delay(300);
-  sim800.println("AT+HTTPINIT");
-  delay(300);
-  sim800.println("AT+HTTPPARA=\"URL\",\"http://apuchawatch.com/api/vital-signs\"");
-  delay(300);
-  sim800.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
-  delay(300);
-  // json
-  String json = "{\"bpm\":" + String(bpm) + ",\"spo2\":" + String(spo2) + "}";
-  sim800.println("AT+HTTPDATA=" + String(json.length()) + ",10000");
-  delay(500);
-  sim800.println(json);
-  delay(500);
+  String url = "/api/vital-signs"; // Ruta en tu backend
+  String contentType = "application/json";
+  String body = "{\"bpm\":" + String(bpm) + ",\"spo2\":" + String(spo2) + "}";
 
-  sim800.println("AT+HTTPACTION=1"); // peticion POST
-  delay(6000);
-  sim800.println("AT+HTTPREAD");
-  delay(500);
+  // para debug
+  Serial.println("POST: " + url);
+  Serial.println("BODY: " + body);
 
-  sim800.println("AT+HTTPTERM");
+  http.post(url, contentType, body);
+
+  int responseStatus = http.responseStatusCode();
+  int response = http.responseBody();
+
+  if (statusCode == 200)
+  {
+    Serial.println("Respuesta: " + response);
+  }
+  else
+  {
+    Serial.println("Error POST: " + String(statusCode));
+  }
+
+  http.stop();
 }
 
 void enviarCaidaBackend(float totalAcc)
 {
-  sim800.println("AT+HTTPTERM");
-  delay(300);
-  sim800.println("AT+HTTPINIT");
-  delay(300);
-  sim800.println("AT+HTTPPARA=\"URL\",\"http://apuchawatch.com/api/vital-signs\"");
-  delay(300);
-  sim800.println("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
-  delay(300);
-  // json
-  String json = "{\"acc\":" + String(totalAcc) + "}";
-  sim800.println("AT+HTTPDATA=" + String(json.length()) + ",10000");
-  delay(500);
-  sim800.println(json);
-  delay(500);
+  String url = "/api/fall"; // Ruta en tu backend
+  String contentType = "application/json";
 
-  sim800.println("AT+HTTPACTION=1"); // peticion POST
-  delay(6000);
-  sim800.println("AT+HTTPREAD");
-  delay(500);
+  String body = "{\"acc\":" + String(totalAcc) + "}";
+  // para debug
+  Serial.println("POST: " + url);
+  Serial.println("BODY: " + body);
 
-  sim800.println("AT+HTTPTERM");
+  http.post(url, contentType, body);
+
+  int responseStatus = http.responseStatusCode();
+  int response = http.responseBody();
+
+  if (statusCode == 200)
+  {
+    Serial.println("Respuesta: " + response);
+  }
+  else
+  {
+    Serial.println("Error POST: " + String(statusCode));
+  }
+
+  http.stop();
 }
