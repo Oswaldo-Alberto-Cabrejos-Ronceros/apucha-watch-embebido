@@ -8,13 +8,6 @@
 // configuraciones para pantalla
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
-// variables para gsm
-#define MODEM_RST 5
-#define MODEM_PWRKEY 4
-#define MODEM_POWER_ON 23
-#define MODEM_TX 27
-#define MODEM_RX 26
-#define MODEM_BAUD 9600
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 MAX30105 particleSensor;     // Sensor de pulso
