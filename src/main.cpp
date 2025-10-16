@@ -35,7 +35,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 */
 String deviceId;
 
-const char *ssid = "OSWALDO";  // Ejemplo: "MiRed"
+const char *ssid = "OSWALDO";      // Ejemplo: "MiRed"
 const char *password = "12345678"; // Ejemplo: "12345678"
 
 void setup()
@@ -91,6 +91,10 @@ void setup()
     }
   }
   Serial.println("MPU6050 OK");
+  // conditional
+  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
+  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
+  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
 
   // intentamos buscar la pantalla
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C))
@@ -104,20 +108,19 @@ void setup()
   display.setCursor(0, 0);
   display.println("OLED OK");
   display.display();
-
+  // para chip id
+  uint64_t chipid = ESP.getEfuseMac();
+  char idStr[13];
+  sprintf(idStr, "%04X%08X", (uint16_t)(chipid >> 32), (uint32_t)chipid);
+  deviceId = String(idStr);
+  Serial.println("Device ID: " + deviceId);
+  display.println("ID: " + deviceId);
+  display.display();
   /*
     // configurar rangos
-    mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
-    mpu.setGyroRange(MPU6050_RANGE_500_DEG);
-    mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
 
-    // para chip id
-    uint64_t chipid = ESP.getEfuseMac();
-    char idStr[13];
-    sprintf(idStr, "%04X%08X", (uint16_t)(chipid >> 32), (uint32_t)chipid);
-    deviceId = String(idStr);
-    Serial.println("Device ID: " + deviceId);
-    display.println("ID: " + deviceId);
+
+
   display.clearDisplay();*/
   delay(2000);
 }
@@ -232,4 +235,8 @@ void loop()
     Serial.println("Escaneo completado.\n");*/
 
   delay(500);
+}
+
+void enviardatosBackend()
+{
 }
