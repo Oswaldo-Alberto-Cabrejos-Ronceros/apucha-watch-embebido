@@ -188,30 +188,6 @@ void loop()
   delay(500);
   Serial.print(" m/s^2 | ");
   /*
-    // limpiamos pantalla
-    display.clearDisplay();
-    display.setCursor(0, 0);
-
-
-
-    // algoritmo proporcionado por sparkfun
-    //  Algoritmo de SparkFun
-    maxim_heart_rate_and_oxygen_saturation(
-        irBuffer, MY_BUFFER_SIZE, redBuffer,
-        &spo2, &validSPO2, &heartRate, &validHeartRate);
-
-    // imprimimos para depurar
-    Serial.print("BPM: ");
-    Serial.print(heartRate);
-    display.print("BPM: ");
-    display.print(heartRate);
-    Serial.print(validHeartRate ? "valido" : "no valido");
-    Serial.print(" | SpO2: ");
-    Serial.print(spo2);
-    display.print(" | SpO2: ");
-    display.print(spo2);
-    Serial.println(validSPO2 ? "%" : " no valido");
-
     // deteccion de caida por rangos
     if (totalAcc < 2)
     {
