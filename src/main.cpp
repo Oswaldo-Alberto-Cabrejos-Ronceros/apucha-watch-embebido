@@ -204,7 +204,7 @@ void loop()
       Serial.println("Posible caída libre detectada");
       enviarCaidaBackend();
     }
-    else if (totalAcc > 20)
+    else if (totalAcc > 15)
     {
       Serial.println("Impacto detectado, enviando alerta...");
       enviarCaidaBackend();
@@ -255,7 +255,7 @@ void enviarSignosVitalesBackend(float bpm, float spo2)
     http.begin(server);
     http.addHeader("Content-Type", "application/json");
 
-    String json = "{\"deviceCode\": \"ABCD1234\", \"heartRate\": " + String(round(bpm)) +
+    String json = "{\"deviceCode\": \"PAD123\", \"heartRate\": " + String(round(bpm)) +
                   ", \"oxygenSaturation\": " + String(round(spo2)) + "}";
 
     int httpResponseCode = http.POST(json);
@@ -291,7 +291,7 @@ void enviarCaidaBackend()
     http.begin(server);
     http.addHeader("Content-Type", "application/json");
 
-    String json = "{\"deviceCode\": \"ABCD1234\"}";
+    String json = "{\"deviceCode\": \"PAD123\"}";
 
     int httpResponseCode = http.POST(json);
 
