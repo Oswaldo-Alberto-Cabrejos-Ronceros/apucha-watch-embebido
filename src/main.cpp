@@ -198,8 +198,7 @@ void loop()
   Serial.print(totalAcc);
   delay(500);
   Serial.print(" m/s^2 | ");
-  /*
-    // deteccion de caida por rangos
+ 
     if (totalAcc < 2)
     {
       Serial.println("Posible caída libre detectada");
@@ -210,9 +209,8 @@ void loop()
       Serial.println("Impacto detectado, enviando alerta...");
       enviarCaidaBackend();
     }
-    delay(1000);
+    delay(500);
 
-    display.display();*/
   Serial.println("Hola mundo");
   display.println("Hola mundo");
   display.display();
