@@ -6,6 +6,8 @@
 // #include <HardwareSerial.h>   // UART para GPS y SIM800L
 #include "spo2_algorithm.h"
 #include <WiFi.h>
+#include <HTTPClient.h>
+#include <math.h>
 
 MAX30105 particleSensor; // Sensor de pulso
 
@@ -37,6 +39,10 @@ String deviceId;
 
 const char *ssid = "OSWALDO";      // Ejemplo: "MiRed"
 const char *password = "12345678"; // Ejemplo: "12345678"
+
+void enviarSignosVitalesBackend(float bpm, float spo2);
+
+void enviarCaidaBackend();
 
 void setup()
 {
@@ -172,6 +178,8 @@ void loop()
     Serial.print(" | SpO2 promedio: ");
     Serial.print(avgSpO2, 1);
     Serial.println("%");
+    // enviar al backend
+    enviarSignosVitalesBackend(avgBPM, avgSpO2);
   }
   else
   {
@@ -195,10 +203,12 @@ void loop()
     if (totalAcc < 2)
     {
       Serial.println("Posible caída libre detectada");
+      enviarCaidaBackend();
     }
     else if (totalAcc > 20)
     {
       Serial.println("Impacto detectado, enviando alerta...");
+      enviarCaidaBackend();
     }
     delay(1000);
 
@@ -237,6 +247,73 @@ void loop()
   delay(500);
 }
 
-void enviardatosBackend()
+void enviarSignosVitalesBackend(float bpm, float spo2)
 {
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    HTTPClient http;
+
+    String server = "https://apucha-watch-backend-1094750444303.us-west1.run.app/vital-signs";
+    http.begin(server);
+    http.addHeader("Content-Type", "application/json");
+
+    String json = "{\"deviceCode\": \"ABCD1234\", \"heartRate\": " + String(round(bpm)) +
+                  ", \"oxygenSaturation\": " + String(round(spo2)) + "}";
+
+    int httpResponseCode = http.POST(json);
+
+    if (httpResponseCode > 0)
+    {
+      Serial.print("Código de respuesta: ");
+      Serial.println(httpResponseCode);
+      String respuesta = http.getString();
+      Serial.println(respuesta);
+    }
+    else
+    {
+      Serial.print("Error en POST: ");
+      Serial.println(httpResponseCode);
+    }
+
+    http.end();
+  }
+  else
+  {
+    Serial.println("WiFi desconectado");
+  }
+}
+
+void enviarCaidaBackend()
+{
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    HTTPClient http;
+
+    String server = "https://apucha-watch-backend-1094750444303.us-west1.run.app/fall";
+    http.begin(server);
+    http.addHeader("Content-Type", "application/json");
+
+    String json = "{\"deviceCode\": \"ABCD1234\"}";
+
+    int httpResponseCode = http.POST(json);
+
+    if (httpResponseCode > 0)
+    {
+      Serial.print("Código de respuesta: ");
+      Serial.println(httpResponseCode);
+      String respuesta = http.getString();
+      Serial.println(respuesta);
+    }
+    else
+    {
+      Serial.print("Error en POST: ");
+      Serial.println(httpResponseCode);
+    }
+
+    http.end();
+  }
+  else
+  {
+    Serial.println("WiFi desconectado");
+  }
 }
