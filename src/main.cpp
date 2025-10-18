@@ -44,6 +44,99 @@ void enviarSignosVitalesBackend(float bpm, float spo2);
 
 void enviarCaidaBackend();
 
+void taskVitalSign(void *parameter)
+{
+  for (;;)
+  {
+    const int N = 5; // n de promedios
+    float avgBPM = 0;
+    float avgSpO2 = 0;
+    int validCount = 0;
+
+    for (int n = 0; n < N; n++)
+    {
+      // --lectura en crudo
+      for (int i = 0; i < MY_BUFFER_SIZE; i++)
+      {
+        while (!particleSensor.available())
+        {
+          particleSensor.check();
+        }
+        redBuffer[i] = particleSensor.getRed();
+        irBuffer[i] = particleSensor.getIR();
+        particleSensor.nextSample();
+      }
+
+      // aplicar algoritmo de SparkFun
+      maxim_heart_rate_and_oxygen_saturation(
+          irBuffer, MY_BUFFER_SIZE, redBuffer,
+          &spo2, &validSPO2, &heartRate, &validHeartRate);
+
+      //  si es válida, acumular
+      if (validHeartRate && validSPO2 && spo2 > 70 && spo2 < 100)
+      {
+        avgBPM += heartRate;
+        avgSpO2 += spo2;
+        validCount++;
+      }
+
+      vTaskDelay(1000 / portTICK_PERIOD_MS); // espera entre lecturas
+    }
+
+    // promedio de lecturas validas
+    if (validCount > 0)
+    {
+      avgBPM /= validCount;
+      avgSpO2 /= validCount;
+
+      Serial.print("BPM promedio: ");
+      Serial.print(avgBPM, 1);
+      Serial.print(" | SpO2 promedio: ");
+      Serial.print(avgSpO2, 1);
+      Serial.println("%");
+      // enviar al backend
+      enviarSignosVitalesBackend(avgBPM, avgSpO2);
+    }
+    else
+    {
+      Serial.println("Lecturas no válidas, intentar de nuevo");
+    }
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
+}
+
+void taskFall(void *parameter)
+{
+  for (;;)
+  {
+
+    // leemos aceleracion
+    sensors_event_t a,
+        g, temp;
+    mpu.getEvent(&a, &g, &temp);
+    float totalAcc = sqrt(pow(a.acceleration.x, 2) +
+                          pow(a.acceleration.y, 2) +
+                          pow(a.acceleration.z, 2));
+    Serial.print("Aceleracion total: ");
+    delay(500);
+    Serial.print(totalAcc);
+    delay(500);
+    Serial.print(" m/s^2 | ");
+
+    if (totalAcc < 2)
+    {
+      Serial.println("Posible caída libre detectada");
+      enviarCaidaBackend();
+    }
+    else if (totalAcc > 15)
+    {
+      Serial.println("Impacto detectado, enviando alerta...");
+      enviarCaidaBackend();
+    }
+    vTaskDelay(200 / portTICK_PERIOD_MS);
+  }
+}
+
 void setup()
 {
   // iniciar puerto serial para debug
@@ -123,94 +216,13 @@ void setup()
   display.println("ID: " + deviceCode);
   display.display();
   /*
-    // configurar rangos
-
-
-
   display.clearDisplay();*/
-  delay(2000);
+  xTaskCreate(taskVitalSign, "SignosVitales", 8192, NULL, 1, NULL);
+  xTaskCreate(taskFall, "Caida", 8192, NULL, 1, NULL);
 }
 void loop()
 {
-  const int N = 5; // n de promedios
-  float avgBPM = 0;
-  float avgSpO2 = 0;
-  int validCount = 0;
-
-  for (int n = 0; n < N; n++)
-  {
-    // --lectura en crudo
-    for (int i = 0; i < MY_BUFFER_SIZE; i++)
-    {
-      while (!particleSensor.available())
-      {
-        particleSensor.check();
-      }
-      redBuffer[i] = particleSensor.getRed();
-      irBuffer[i] = particleSensor.getIR();
-      particleSensor.nextSample();
-    }
-
-    // aplicar algoritmo de SparkFun
-    maxim_heart_rate_and_oxygen_saturation(
-        irBuffer, MY_BUFFER_SIZE, redBuffer,
-        &spo2, &validSPO2, &heartRate, &validHeartRate);
-
-    //  si es válida, acumular
-    if (validHeartRate && validSPO2 && spo2 > 70 && spo2 < 100)
-    {
-      avgBPM += heartRate;
-      avgSpO2 += spo2;
-      validCount++;
-    }
-
-    delay(500); // espera entre lecturas
-  }
-
-  // promedio de lecturas validas
-  if (validCount > 0)
-  {
-    avgBPM /= validCount;
-    avgSpO2 /= validCount;
-
-    Serial.print("BPM promedio: ");
-    Serial.print(avgBPM, 1);
-    Serial.print(" | SpO2 promedio: ");
-    Serial.print(avgSpO2, 1);
-    Serial.println("%");
-    // enviar al backend
-    enviarSignosVitalesBackend(avgBPM, avgSpO2);
-  }
-  else
-  {
-    Serial.println("Lecturas no válidas, intentar de nuevo");
-  }
-
-  // leemos aceleracion
-  sensors_event_t a,
-      g, temp;
-  mpu.getEvent(&a, &g, &temp);
-  float totalAcc = sqrt(pow(a.acceleration.x, 2) +
-                        pow(a.acceleration.y, 2) +
-                        pow(a.acceleration.z, 2));
-  Serial.print("Aceleracion total: ");
   delay(500);
-  Serial.print(totalAcc);
-  delay(500);
-  Serial.print(" m/s^2 | ");
-
-  if (totalAcc < 2)
-  {
-    Serial.println("Posible caída libre detectada");
-    enviarCaidaBackend();
-  }
-  else if (totalAcc > 15)
-  {
-    Serial.println("Impacto detectado, enviando alerta...");
-    enviarCaidaBackend();
-  }
-  delay(500);
-
   Serial.println("Hola mundo");
   display.println("Hola mundo");
   display.display();
