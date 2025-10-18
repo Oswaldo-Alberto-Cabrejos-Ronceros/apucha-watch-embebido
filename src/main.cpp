@@ -35,7 +35,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 /*
 
 */
-String deviceId;
+String deviceCode;
 
 const char *ssid = "OSWALDO";      // Ejemplo: "MiRed"
 const char *password = "12345678"; // Ejemplo: "12345678"
@@ -118,9 +118,9 @@ void setup()
   uint64_t chipid = ESP.getEfuseMac();
   char idStr[13];
   sprintf(idStr, "%04X%08X", (uint16_t)(chipid >> 32), (uint32_t)chipid);
-  deviceId = String(idStr);
-  Serial.println("Device ID: " + deviceId);
-  display.println("ID: " + deviceId);
+  deviceCode = String(idStr);
+  Serial.println("Device ID: " + deviceCode);
+  display.println("ID: " + deviceCode);
   display.display();
   /*
     // configurar rangos
@@ -198,18 +198,18 @@ void loop()
   Serial.print(totalAcc);
   delay(500);
   Serial.print(" m/s^2 | ");
- 
-    if (totalAcc < 2)
-    {
-      Serial.println("Posible caída libre detectada");
-      enviarCaidaBackend();
-    }
-    else if (totalAcc > 15)
-    {
-      Serial.println("Impacto detectado, enviando alerta...");
-      enviarCaidaBackend();
-    }
-    delay(500);
+
+  if (totalAcc < 2)
+  {
+    Serial.println("Posible caída libre detectada");
+    enviarCaidaBackend();
+  }
+  else if (totalAcc > 15)
+  {
+    Serial.println("Impacto detectado, enviando alerta...");
+    enviarCaidaBackend();
+  }
+  delay(500);
 
   Serial.println("Hola mundo");
   display.println("Hola mundo");
@@ -255,7 +255,7 @@ void enviarSignosVitalesBackend(float bpm, float spo2)
     http.begin(server);
     http.addHeader("Content-Type", "application/json");
 
-    String json = "{\"deviceCode\": \"PAD123\", \"heartRate\": " + String(round(bpm)) +
+    String json = "{\"deviceCode\": \"" + deviceCode + "\", \"heartRate\": " + String(round(bpm)) +
                   ", \"oxygenSaturation\": " + String(round(spo2)) + "}";
 
     int httpResponseCode = http.POST(json);
@@ -291,7 +291,7 @@ void enviarCaidaBackend()
     http.begin(server);
     http.addHeader("Content-Type", "application/json");
 
-    String json = "{\"deviceCode\": \"PAD123\"}";
+    String json = "{\"deviceCode\": \"" + deviceCode + "\"}";
 
     int httpResponseCode = http.POST(json);
 
