@@ -37,8 +37,12 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 */
 String deviceCode;
 
-const char *ssid = "OSWALDO";      // Ejemplo: "MiRed"
-const char *password = "12345678"; // Ejemplo: "12345678"
+const char *ssid = "OSWALDO";
+const char *password = "12345678";
+//para configurar hora
+const char* ntpServer = "pool.ntp.org";
+const long  gmtOffset_sec = -5 * 3600; //horario peru
+const int   daylightOffset_sec = 0;
 
 void enviarSignosVitalesBackend(float bpm, float spo2);
 
@@ -159,6 +163,19 @@ void setup()
   Serial.println("WiFi conectado");
   Serial.print("Dirección IP: ");
   Serial.println(WiFi.localIP());
+
+  //configurar ntp
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+
+  //obtenemos hora
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) {
+    Serial.println("Error al obtener la hora");
+    return;
+  }
+
+  Serial.println("Hora sincronizada correctamente:");
+  Serial.println(&timeinfo, "%A, %d %B %Y %H:%M:%S");
 
   Serial.println("Iniciando sistema reloj...");
   Wire.begin(8, 9, 100000);
