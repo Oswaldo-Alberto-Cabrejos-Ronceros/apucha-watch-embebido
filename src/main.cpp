@@ -105,6 +105,24 @@ void taskVitalSign(void *parameter)
       Serial.println("%");
       // enviar al backend
       enviarSignosVitalesBackend(avgBPM, avgSpO2);
+      display.clearDisplay();
+      // titulo
+      display.setTextSize(1);
+      display.setCursor(10, 0);
+      display.println("Signos Vitales");
+      // linea separadora
+      display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
+      // datos
+      display.setTextSize(2);
+      display.setCursor(10, 25);
+      display.print("BPM: ");
+      display.println((int)round(avgBPM));
+
+      display.setCursor(10, 50);
+      display.print("SpO2: ");
+      display.println((int)round(avgSpO2));
+      // mandamos a imprimir
+      display.display();
     }
     else
     {
@@ -136,11 +154,17 @@ void taskFall(void *parameter)
     {
       Serial.println("Posible caída libre detectada");
       enviarCaidaBackend();
+      display.clearDisplay();
+      display.setCursor(10, 25);
+      display.println("Posible caída libre detectada");
     }
     else if (totalAcc > 15)
     {
       Serial.println("Impacto detectado, enviando alerta...");
       enviarCaidaBackend();
+      display.clearDisplay();
+      display.setCursor(10, 25);
+      display.println("Impacto detectado, enviando alerta...");
     }
     vTaskDelay(200 / portTICK_PERIOD_MS);
   }
@@ -256,9 +280,6 @@ void setup()
 void loop()
 {
   delay(500);
-  Serial.println("Hola mundo");
-  display.println("Hola mundo");
-  display.display();
   /*
   byte error, address;
   int nDevices = 0;
@@ -286,8 +307,10 @@ void loop()
     Serial.println("No se encontraron dispositivos I2C\n");
   else
     Serial.println("Escaneo completado.\n");*/
+}
 
-  delay(500);
+void mostrarSignosVitalesPantalla(float bpm, float spo2)
+{
 }
 
 void enviarSignosVitalesBackend(float bpm, float spo2)
