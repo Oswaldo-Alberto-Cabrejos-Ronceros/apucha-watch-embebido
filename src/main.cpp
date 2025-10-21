@@ -8,6 +8,7 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <math.h>
+#include <ArduinoJson.h>
 
 MAX30105 particleSensor; // Sensor de pulso
 
@@ -37,16 +38,20 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 */
 String deviceCode;
 
+bool isVinculed;
+
 const char *ssid = "OSWALDO";
 const char *password = "12345678";
-//para configurar hora
-const char* ntpServer = "pool.ntp.org";
-const long  gmtOffset_sec = -5 * 3600; //horario peru
-const int   daylightOffset_sec = 0;
+// para configurar hora
+const char *ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = -5 * 3600; // horario peru
+const int daylightOffset_sec = 0;
 
 void enviarSignosVitalesBackend(float bpm, float spo2);
 
 void enviarCaidaBackend();
+
+void verificarVinculo();
 
 void taskVitalSign(void *parameter)
 {
@@ -164,18 +169,25 @@ void setup()
   Serial.print("Dirección IP: ");
   Serial.println(WiFi.localIP());
 
-  //configurar ntp
+  // configurar ntp
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 
-  //obtenemos hora
+  // obtenemos hora
   struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) {
+  if (!getLocalTime(&timeinfo))
+  {
     Serial.println("Error al obtener la hora");
     return;
   }
 
   Serial.println("Hora sincronizada correctamente:");
   Serial.println(&timeinfo, "%A, %d %B %Y %H:%M:%S");
+
+  // para chip id
+  uint64_t chipid = ESP.getEfuseMac();
+  char idStr[13];
+  sprintf(idStr, "%04X%08X", (uint16_t)(chipid >> 32), (uint32_t)chipid);
+  deviceCode = String(idStr);
 
   Serial.println("Iniciando sistema reloj...");
   Wire.begin(8, 9, 100000);
@@ -224,13 +236,17 @@ void setup()
   display.setCursor(0, 0);
   display.println("OLED OK");
   display.display();
-  // para chip id
-  uint64_t chipid = ESP.getEfuseMac();
-  char idStr[13];
-  sprintf(idStr, "%04X%08X", (uint16_t)(chipid >> 32), (uint32_t)chipid);
-  deviceCode = String(idStr);
+
   Serial.println("Device ID: " + deviceCode);
   display.println("ID: " + deviceCode);
+  display.display();
+  while (!isVinculed)
+  {
+    verificarVinculo();
+    delay(4000);
+  }
+  Serial.println("Vinculo verificado");
+  display.println("Vinculo verificado");
   display.display();
   /*
   display.clearDisplay();*/
@@ -330,6 +346,52 @@ void enviarCaidaBackend()
       Serial.println(httpResponseCode);
       String respuesta = http.getString();
       Serial.println(respuesta);
+    }
+    else
+    {
+      Serial.print("Error en POST: ");
+      Serial.println(httpResponseCode);
+    }
+
+    http.end();
+  }
+  else
+  {
+    Serial.println("WiFi desconectado");
+  }
+}
+
+void verificarVinculo()
+{
+  if (WiFi.status() == WL_CONNECTED)
+  {
+    HTTPClient http;
+
+    String server = "https://apucha-watch-backend-1094750444303.us-west1.run.app/devices/exist-by-code/" + deviceCode;
+    http.begin(server);
+    http.addHeader("Content-Type", "application/json");
+    int httpResponseCode = http.GET();
+
+    if (httpResponseCode > 0)
+    {
+      Serial.print("Código de respuesta: ");
+      Serial.println(httpResponseCode);
+      String respuesta = http.getString();
+      Serial.println(respuesta);
+      // deserializamos json
+      JsonDocument doc;
+      DeserializationError error = deserializeJson(doc, respuesta);
+      if (!error)
+      {
+        isVinculed = doc["exist"];
+        Serial.println("Esta vinculado");
+        Serial.println(isVinculed);
+      }
+      else
+      {
+        Serial.println("Error al pasear json");
+        Serial.println(error.c_str());
+      }
     }
     else
     {
