@@ -53,6 +53,8 @@ void enviarCaidaBackend();
 
 void verificarVinculo();
 
+String toBase36(uint32_t value);
+
 void taskVitalSign(void *parameter)
 {
   for (;;)
@@ -209,9 +211,9 @@ void setup()
 
   // para chip id
   uint64_t chipid = ESP.getEfuseMac();
-  char idStr[13];
-  sprintf(idStr, "%04X%08X", (uint16_t)(chipid >> 32), (uint32_t)chipid);
-  deviceCode = String(idStr);
+  deviceCode = toBase36(chipid);
+  Serial.print("Codigo generado");
+  Serial.print(deviceCode);
 
   Serial.println("Iniciando sistema reloj...");
   Wire.begin(8, 9, 100000);
@@ -260,15 +262,32 @@ void setup()
   display.setCursor(0, 0);
   display.println("OLED OK");
   display.display();
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.print("Codigo:");
+  display.setTextSize(2);
+  int16_t x1, y1;
+  uint16_t w, h;
 
-  Serial.println("Device ID: " + deviceCode);
-  display.println("ID: " + deviceCode);
+  // calcular el tamaño del texto
+  display.getTextBounds(deviceCode, 0, 0, &x1, &y1, &w, &h);
+
+  // coordenadas
+  int x = (SCREEN_WIDTH - w) / 2;
+  int y = (SCREEN_HEIGHT - h) / 2;
+
+  // Posiciona y escribe el texto
+  display.setCursor(x, y);
+  Serial.println("Codigo:");
+  display.println(deviceCode);
   display.display();
   while (!isVinculed)
   {
     verificarVinculo();
     delay(4000);
   }
+  display.clearDisplay();
+  display.setCursor(0,0);
   Serial.println("Vinculo verificado");
   display.println("Vinculo verificado");
   display.display();
@@ -279,7 +298,6 @@ void setup()
 }
 void loop()
 {
-  delay(500);
   /*
   byte error, address;
   int nDevices = 0;
@@ -428,4 +446,18 @@ void verificarVinculo()
   {
     Serial.println("WiFi desconectado");
   }
+}
+
+String toBase36(uint32_t value) {
+  String result = "";
+  const char* digits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+  if (value == 0) return "0";
+
+  while (value > 0) {
+    result = digits[value % 36] + result;
+    value /= 36;
+  }
+
+  return result;
 }
