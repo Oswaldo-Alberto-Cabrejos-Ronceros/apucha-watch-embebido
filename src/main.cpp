@@ -3,7 +3,7 @@
 #include <Adafruit_GFX.h>
 #include "MAX30105.h"         // Para MAX30102 (usa misma librería)
 #include "Adafruit_MPU6050.h" // Librería MPU6050
-// #include <HardwareSerial.h>   // UART para GPS y SIM800L
+#include <HardwareSerial.h>   // UART para GPS y SIM800L
 #include "spo2_algorithm.h"
 #include <WiFi.h>
 #include <HTTPClient.h>
@@ -47,6 +47,9 @@ const char *ntpServer = "pool.ntp.org";
 const long gmtOffset_sec = -5 * 3600; // horario peru
 const int daylightOffset_sec = 0;
 
+// para sim800l
+HardwareSerial sim(1); // UART1
+
 void enviarSignosVitalesBackend(float bpm, float spo2);
 
 void enviarCaidaBackend();
@@ -55,8 +58,12 @@ void verificarVinculo();
 
 String toBase36(uint32_t value);
 
-void taskVitalSign(void *parameter)
-{
+void iniciarGPRS(String apn);
+bool esperarRespuesta(String esperado, unsigned long timeout);
+
+void enviarAT(String cmd);
+
+void taskVitalSign(void *parameter){
   for (;;)
   {
     const int N = 5; // n de promedios
@@ -219,8 +226,16 @@ void setup()
   Wire.begin(8, 9, 100000);
   Serial.println("\nEscaneo I2C iniciado...");
 
-  // configuracion del max 30102 - pulso
-  if (!particleSensor.begin(Wire, I2C_SPEED_STANDARD))
+  // conectamos sim800l
+  sim.begin(9600, SERIAL_8N1, 20, 21);
+  Serial.println("Iniciando SIM800L...");
+  enviarAT("AT");
+  enviarAT("AT+CSQ");
+      // conectamos a internet
+      iniciarGPRS("entel.pe");
+
+      // configuracion del max 30102 - pulso
+      if (!particleSensor.begin(Wire, I2C_SPEED_STANDARD))
   {
     Serial.println("No se encontró MAX30102");
     // display.println("MAX30102 ERROR");
@@ -287,7 +302,7 @@ void setup()
     delay(4000);
   }
   display.clearDisplay();
-  display.setCursor(0,0);
+  display.setCursor(0, 0);
   Serial.println("Vinculo verificado");
   display.println("Vinculo verificado");
   display.display();
@@ -367,6 +382,52 @@ void enviarSignosVitalesBackend(float bpm, float spo2)
   }
 }
 
+void enviarSignosVitalesBackendGrps(float bpm, float spo2)
+{
+  String url = "https://apucha-watch-backend-1094750444303.us-west1.run.app/vital-signs";
+
+  // construimos el JSON
+  String json = "{\"deviceCode\":\"" + deviceCode + "\",\"heartRate\":" + String(round(bpm)) +
+                ",\"oxygenSaturation\":" + String(round(spo2)) + "}";
+
+  Serial.println("Enviando signos vitales...");
+  Serial.println(json);
+
+  enviarAT("AT+HTTPTERM"); // cerramos sesion previa
+  delay(1000);
+  enviarAT("AT+HTTPINIT");
+  enviarAT("AT+HTTPPARA=\"CID\",1");
+  enviarAT("AT+HTTPPARA=\"URL\",\"" + url + "\"");
+  enviarAT("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
+
+  // Indicar que enviaremos datos (tamaño y tiempo máximo)
+  sim.println("AT+HTTPDATA=" + String(json.length()) + ",10000");
+  delay(100);
+  if (esperarRespuesta("DOWNLOAD", 5000))
+  {
+    sim.print(json); // enviar el cuerpo JSON
+    delay(2000);
+  }
+
+  enviarAT("AT+HTTPACTION=1"); // Post
+  delay(8000);
+
+  // leemos respuesta respuesta
+  sim.println("AT+HTTPREAD");
+  delay(3000);
+
+  String respuesta = "";
+  while (sim.available())
+  {
+    respuesta += (char)sim.read();
+  }
+
+  Serial.println("Respuesta del servidor:");
+  Serial.println(respuesta);
+
+  enviarAT("AT+HTTPTERM");
+}
+
 void enviarCaidaBackend()
 {
   if (WiFi.status() == WL_CONNECTED)
@@ -400,6 +461,47 @@ void enviarCaidaBackend()
   {
     Serial.println("WiFi desconectado");
   }
+}
+
+void enviarCaidaBackendGrps()
+{
+  String url = "https://apucha-watch-backend-1094750444303.us-west1.run.app/fall";
+  String json = "{\"deviceCode\": \"" + deviceCode + "\"}";
+  Serial.println("Enviando caida...");
+  Serial.println(json);
+
+  enviarAT("AT+HTTPTERM"); // cerramos sesion previa
+  delay(1000);
+  enviarAT("AT+HTTPINIT");
+  enviarAT("AT+HTTPPARA=\"CID\",1");
+  enviarAT("AT+HTTPPARA=\"URL\",\"" + url + "\"");
+  enviarAT("AT+HTTPPARA=\"CONTENT\",\"application/json\"");
+  // Indicar que enviaremos datos (tamaño y tiempo máximo)
+  sim.println("AT+HTTPDATA=" + String(json.length()) + ",10000");
+  delay(100);
+  if (esperarRespuesta("DOWNLOAD", 5000))
+  {
+    sim.print(json); // enviar el cuerpo JSON
+    delay(2000);
+  }
+
+  enviarAT("AT+HTTPACTION=1"); // Post
+  delay(8000);
+
+  // leemos respuesta respuesta
+  sim.println("AT+HTTPREAD");
+  delay(3000);
+
+  String respuesta = "";
+  while (sim.available())
+  {
+    respuesta += (char)sim.read();
+  }
+
+  Serial.println("Respuesta del servidor:");
+  Serial.println(respuesta);
+
+  enviarAT("AT+HTTPTERM");
 }
 
 void verificarVinculo()
@@ -448,16 +550,120 @@ void verificarVinculo()
   }
 }
 
-String toBase36(uint32_t value) {
+void verificarVinculoGrps()
+{
+  String url = "https://apucha-watch-backend-1094750444303.us-west1.run.app/devices/exist-by-code/" + deviceCode;
+  Serial.println("Consultando URL:");
+  Serial.println(url);
+
+  enviarAT("AT+HTTPTERM"); // cerramos sesion previa
+  delay(1000);
+
+  enviarAT("AT+HTTPINIT");
+  enviarAT("AT+HTTPPARA=\"CID\",1");
+
+  enviarAT("AT+HTTPPARA=\"URL\",\"" + url + "\"");
+  enviarAT("AT+HTTPACTION=0"); // peticion get
+  delay(6000);
+  // leer respuesta
+
+  sim.println("AT+HTTPREAD");
+  delay(3000);
+
+  String respuesta = "";
+  while (sim.available())
+  {
+    respuesta += (char)sim.read();
+  }
+
+  Serial.println("Respuesta del servidor:");
+  Serial.println(respuesta);
+  // deserializamos json
+  int jsonStart = respuesta.indexOf("{");
+  int jsonEnd = respuesta.lastIndexOf("}");
+  if (jsonStart != -1 && jsonEnd != -1)
+  {
+    String jsonStr = respuesta.substring(jsonStart, jsonEnd + 1);
+
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, jsonStr);
+    if (!error)
+    {
+      isVinculed = doc["exist"];
+      Serial.println("Esta vinculado:");
+      Serial.println(isVinculed);
+    }
+    else
+    {
+      Serial.println("Error al parsear JSON:");
+      Serial.println(error.c_str());
+    }
+  }
+  else
+  {
+    Serial.println("No se encontró JSON en la respuesta");
+  }
+
+  enviarAT("AT+HTTPTERM");
+}
+
+String toBase36(uint32_t value)
+{
   String result = "";
-  const char* digits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const char *digits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
-  if (value == 0) return "0";
+  if (value == 0)
+    return "0";
 
-  while (value > 0) {
+  while (value > 0)
+  {
     result = digits[value % 36] + result;
     value /= 36;
   }
 
   return result;
+}
+
+// para conectarse a una red
+void iniciarGPRS(String apn)
+{
+  Serial.println("Conectando a red GPRS...");
+  enviarAT("AT");
+  enviarAT("AT+SAPBR=3,1,\"CONTYPE\",\"GPRS\"");
+  enviarAT("AT+SAPBR=3,1,\"APN\",\"" + apn + "\"");
+  enviarAT("AT+SAPBR=1,1");
+  delay(3000);
+  enviarAT("AT+SAPBR=2,1");
+  Serial.println("GPRS listo.");
+}
+
+// para mandar comandos cmd
+void enviarAT(String cmd)
+{
+  sim.println(cmd);
+  delay(1000);
+  while (sim.available())
+  {
+    Serial.write(sim.read());
+  }
+}
+
+// para esperar respuesta de sim800l
+bool esperarRespuesta(String esperado, unsigned long timeout)
+{
+  unsigned long start = millis();
+  String respuesta = "";
+  while (millis() - start < timeout)
+  {
+    if (sim.available())
+    {
+      char c = sim.read();
+      respuesta += c;
+      if (respuesta.indexOf(esperado) != -1)
+      {
+        return true;
+      }
+    }
+  }
+  return false;
 }
