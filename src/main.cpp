@@ -10,6 +10,10 @@
 #include <math.h>
 #include <ArduinoJson.h>
 
+// pines de los botones
+#define PIN_BOTON_1 2
+#define PIN_BOTON_2 3
+
 MAX30105 particleSensor; // Sensor de pulso
 
 // buffers para el calculo de spo2 bpm
@@ -50,6 +54,10 @@ const int daylightOffset_sec = 0;
 // para sim800l
 HardwareSerial sim(1); // UART1
 
+bool llamadaActiva = false;
+
+unsigned long tiempoInicioLlamada = 0;
+
 void enviarSignosVitalesBackend(float bpm, float spo2);
 
 void enviarCaidaBackend();
@@ -63,7 +71,8 @@ bool esperarRespuesta(String esperado, unsigned long timeout);
 
 void enviarAT(String cmd);
 
-void taskVitalSign(void *parameter){
+void taskVitalSign(void *parameter)
+{
   for (;;)
   {
     const int N = 5; // n de promedios
@@ -145,7 +154,6 @@ void taskFall(void *parameter)
 {
   for (;;)
   {
-
     // leemos aceleracion
     sensors_event_t a,
         g, temp;
@@ -176,6 +184,55 @@ void taskFall(void *parameter)
       display.println("Impacto detectado, enviando alerta...");
     }
     vTaskDelay(200 / portTICK_PERIOD_MS);
+  }
+}
+
+void taskCall(void *parameter)
+{
+  for (;;)
+  {
+    if (sim.available())
+    {
+      String respuesta = sim.readStringUntil('\n');
+      respuesta.trim();
+
+      if (respuesta == "RING")
+      {
+        Serial.println("Llamada entrante detectada...");
+      }
+      else if (respuesta.startsWith("+CLIP:"))
+      {
+        Serial.println("Número que llama: " + respuesta);
+        vTaskDelay(2000 / portTICK_PERIOD_MS); // esperamos 2 segundos
+        Serial.println("Contestando automáticamente...");
+        sim.println("ATA"); // contestamos
+        tiempoInicioLlamada = millis();
+        llamadaActiva = true;
+      }
+      else if (respuesta.indexOf("NO CARRIER") != -1)
+      {
+        Serial.println("Llamada finalizada o rechazada");
+        llamadaActiva = false;
+      }
+      else if (respuesta.indexOf("BUSY") != -1)
+      {
+        Serial.println("Línea ocupada");
+        llamadaActiva = false;
+      }
+    }
+
+    // Si hay una llamada activa, medimos tiempo
+    if (llamadaActiva)
+    {
+      unsigned long duracion = (millis() - tiempoInicioLlamada) / 1000;
+
+      if (duracion > 10)
+      { // colgamos despues de 10 segundos
+        Serial.println("⏱️ Llamada finalizada automáticamente (10s)");
+        sim.println("ATH"); // colgar
+        llamadaActiva = false;
+      }
+    }
   }
 }
 
@@ -231,11 +288,15 @@ void setup()
   Serial.println("Iniciando SIM800L...");
   enviarAT("AT");
   enviarAT("AT+CSQ");
-      // conectamos a internet
-      iniciarGPRS("entel.pe");
+  // conectamos a internet
+  iniciarGPRS("entel.pe");
 
-      // configuracion del max 30102 - pulso
-      if (!particleSensor.begin(Wire, I2C_SPEED_STANDARD))
+  // inicializamos botones
+    pinMode(PIN_BOTON_1, INPUT_PULLUP);
+   pinMode(PIN_BOTON_2, INPUT_PULLUP);
+
+  // configuracion del max 30102 - pulso
+  if (!particleSensor.begin(Wire, I2C_SPEED_STANDARD))
   {
     Serial.println("No se encontró MAX30102");
     // display.println("MAX30102 ERROR");
@@ -310,6 +371,7 @@ void setup()
   display.clearDisplay();*/
   xTaskCreate(taskVitalSign, "SignosVitales", 8192, NULL, 1, NULL);
   xTaskCreate(taskFall, "Caida", 8192, NULL, 1, NULL);
+  xTaskCreate(taskCall, "Llamada", 4096, NULL, 1, NULL);
 }
 void loop()
 {
@@ -634,7 +696,11 @@ void iniciarGPRS(String apn)
   enviarAT("AT+SAPBR=1,1");
   delay(3000);
   enviarAT("AT+SAPBR=2,1");
-  Serial.println("GPRS listo.");
+  Serial.println("GPRS listo");
+  // iniciamos para llamadas
+  enviarAT("AT+CLIP=1");
+  enviarAT("AT+COLP=1");
+  Serial.println("GPRS listo para llamadas");
 }
 
 // para mandar comandos cmd
