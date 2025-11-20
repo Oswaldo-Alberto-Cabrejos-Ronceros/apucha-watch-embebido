@@ -178,6 +178,64 @@ void setup()
   delay(5000);
   Serial.begin(115200);
 
+Serial.println("Escaneando redes disponibles...");
+int n = WiFi.scanNetworks();
+for (int i = 0; i < n; i++) {
+  Serial.print(i + 1);
+  Serial.print(": ");
+  Serial.print(WiFi.SSID(i));
+  Serial.print(" (canal ");
+  Serial.print(WiFi.channel(i));
+  Serial.println(")");
+}
+
+  Wire.begin(8, 9, 100000);
+
+  
+
+
+    // intentamos buscar la pantalla
+  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C))
+  {
+    Serial.println("No se encontró pantalla OLED");
+  }
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.println("OLED OK");
+  display.display();
+
+  byte error, direccion;
+  int dispositivos = 0;
+
+  Serial.println("Buscando dispositivos I2C...\n");
+
+  for (direccion = 1; direccion < 127; direccion++) {
+    Wire.beginTransmission(direccion);
+    error = Wire.endTransmission();
+
+    if (error == 0) {
+      Serial.print("Dispositivo encontrado en dirección: 0x");
+      display.print("Dispositivo encontrado en dirección: 0x");
+      Serial.println(direccion, HEX);
+      display.println(direccion, HEX);
+      display.display();
+      dispositivos++;
+      delay(5);
+    }
+    else if (error == 4) {
+      Serial.print("Error desconocido en dirección 0x");
+      Serial.println(direccion, HEX);
+    }
+  }
+
+  if (dispositivos == 0) {
+    Serial.println("\nNo se encontraron dispositivos I2C.");
+  } else {
+    Serial.println("\nEscaneo I2C completado.");
+  }
+
   Serial.println("Conectando al WiFi...");
   WiFi.begin(ssid, password);
   Serial.println(ssid);
@@ -216,7 +274,7 @@ void setup()
   Serial.print(deviceCode);
 
   Serial.println("Iniciando sistema reloj...");
-  Wire.begin(8, 9, 100000);
+
   Serial.println("\nEscaneo I2C iniciado...");
 
   // configuracion del max 30102 - pulso
@@ -250,11 +308,7 @@ void setup()
   mpu.setGyroRange(MPU6050_RANGE_500_DEG);
   mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
 
-  // intentamos buscar la pantalla
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C))
-  {
-    Serial.println("No se encontró pantalla OLED");
-  }
+
   // configuracion inicar de la pantalla
   display.clearDisplay();
   display.setTextSize(1);
