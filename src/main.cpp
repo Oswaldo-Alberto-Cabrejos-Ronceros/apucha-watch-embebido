@@ -59,118 +59,109 @@ void taskVitalSign(void *parameter)
 {
   for (;;)
   {
-    const int N = 5; // n de promedios
-    float avgBPM = 0;
-    float avgSpO2 = 0;
-    int validCount = 0;
+    // Cada 30 segundos
+    vTaskDelay(30000 / portTICK_PERIOD_MS);
 
-    for (int n = 0; n < N; n++)
-    {
-      // --lectura en crudo
-      for (int i = 0; i < MY_BUFFER_SIZE; i++)
-      {
-        while (!particleSensor.available())
-        {
-          particleSensor.check();
-        }
-        redBuffer[i] = particleSensor.getRed();
-        irBuffer[i] = particleSensor.getIR();
-        particleSensor.nextSample();
-      }
+    // Generar valores aleatorios dentro del rango indicado
+    float avgBPM = random(80, 121);   // 80 a 120
+    float avgSpO2 = random(90, 99);   // 90 a 98
 
-      // aplicar algoritmo de SparkFun
-      maxim_heart_rate_and_oxygen_saturation(
-          irBuffer, MY_BUFFER_SIZE, redBuffer,
-          &spo2, &validSPO2, &heartRate, &validHeartRate);
+    Serial.print("BPM simulado: ");
+    Serial.print(avgBPM);
+    Serial.print(" | SpO2 simulado: ");
+    Serial.print(avgSpO2);
+    Serial.println("%");
 
-      //  si es válida, acumular
-      if (validHeartRate && validSPO2 && spo2 > 70 && spo2 < 100)
-      {
-        avgBPM += heartRate;
-        avgSpO2 += spo2;
-        validCount++;
-      }
+    // Enviar al backend
+    enviarSignosVitalesBackend(avgBPM, avgSpO2);
 
-      vTaskDelay(1000 / portTICK_PERIOD_MS); // espera entre lecturas
-    }
+    // Mostrar en pantalla
+    display.clearDisplay();
 
-    // promedio de lecturas validas
-    if (validCount > 0)
-    {
-      avgBPM /= validCount;
-      avgSpO2 /= validCount;
+    // Título
+    display.setTextSize(1);
+    display.setCursor(10, 0);
+    display.println("Signos Vitales");
 
-      Serial.print("BPM promedio: ");
-      Serial.print(avgBPM, 1);
-      Serial.print(" | SpO2 promedio: ");
-      Serial.print(avgSpO2, 1);
-      Serial.println("%");
-      // enviar al backend
-      enviarSignosVitalesBackend(avgBPM, avgSpO2);
-      display.clearDisplay();
-      // titulo
-      display.setTextSize(1);
-      display.setCursor(10, 0);
-      display.println("Signos Vitales");
-      // linea separadora
-      display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
-      // datos
-      display.setTextSize(2);
-      display.setCursor(10, 25);
-      display.print("BPM: ");
-      display.println((int)round(avgBPM));
+    // Línea separadora
+    display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
 
-      display.setCursor(10, 50);
-      display.print("SpO2: ");
-      display.println((int)round(avgSpO2));
-      // mandamos a imprimir
-      display.display();
-    }
-    else
-    {
-      Serial.println("Lecturas no válidas, intentar de nuevo");
-    }
-    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    // Datos BPM
+    display.setTextSize(2);
+    display.setCursor(10, 25);
+    display.print("BPM: ");
+    display.println((int)avgBPM);
+
+    // Datos SpO2
+    display.setCursor(10, 50);
+    display.print("SpO2: ");
+    display.println((int)avgSpO2);
+
+    display.display();
   }
 }
 
 void taskFall(void *parameter)
 {
+  unsigned long lastAlertTime = 0; // tiempo de la última alerta en ms
+
   for (;;)
   {
+    // ---- generar aceleración simulada ----
+    // 80% movimiento normal, 10% caída, 10% impacto
+    int r = random(0, 100);
+    float totalAcc;
 
-    // leemos aceleracion
-    sensors_event_t a,
-        g, temp;
-    mpu.getEvent(&a, &g, &temp);
-    float totalAcc = sqrt(pow(a.acceleration.x, 2) +
-                          pow(a.acceleration.y, 2) +
-                          pow(a.acceleration.z, 2));
-    Serial.print("Aceleracion total: ");
-    delay(500);
+    if (r < 80)
+    {
+      totalAcc = random(500, 1200) / 100.0; // 5.0 a 12.0
+    }
+    else if (r < 90)
+    {
+      totalAcc = random(50, 150) / 100.0; // 0.5 a 1.5 caída
+    }
+    else
+    {
+      totalAcc = random(1500, 2500) / 100.0; // 15.0 a 25.0 impacto
+    }
+
+    // mostrar aceleración simulada
+    Serial.print("Aceleracion total simulada: ");
     Serial.print(totalAcc);
-    delay(500);
-    Serial.print(" m/s^2 | ");
+    Serial.println(" m/s^2");
 
-    if (totalAcc < 2)
+    // ---- ver si ya pasó 1 minuto desde la última alerta ----
+    unsigned long now = millis();
+    bool puedeEnviar = (now - lastAlertTime >= 60000);
+
+    // ---- detección de alerta ----
+    if (totalAcc < 2 && puedeEnviar)
     {
-      Serial.println("Posible caída libre detectada");
+      Serial.println("Posible caída libre detectada (simulada)");
       enviarCaidaBackend();
+      lastAlertTime = now;
+
       display.clearDisplay();
-      display.setCursor(10, 25);
-      display.println("Posible caída libre detectada");
+      display.setCursor(0, 25);
+      display.println("Caida libre detectada");
+      display.display();
     }
-    else if (totalAcc > 15)
+    else if (totalAcc > 15 && puedeEnviar)
     {
-      Serial.println("Impacto detectado, enviando alerta...");
+      Serial.println("Impacto detectado (simulado)");
       enviarCaidaBackend();
+      lastAlertTime = now;
+
       display.clearDisplay();
-      display.setCursor(10, 25);
-      display.println("Impacto detectado, enviando alerta...");
+      display.setCursor(0, 25);
+      display.println("Impacto detectado!");
+      display.display();
     }
-    vTaskDelay(200 / portTICK_PERIOD_MS);
+
+    vTaskDelay(300 / portTICK_PERIOD_MS);
   }
 }
+
 
 void setup()
 {
@@ -267,6 +258,8 @@ for (int i = 0; i < n; i++) {
   Serial.println("Hora sincronizada correctamente:");
   Serial.println(&timeinfo, "%A, %d %B %Y %H:%M:%S");
 
+  randomSeed(esp_random());
+
   // para chip id
   uint64_t chipid = ESP.getEfuseMac();
   deviceCode = toBase36(chipid);
@@ -277,36 +270,9 @@ for (int i = 0; i < n; i++) {
 
   Serial.println("\nEscaneo I2C iniciado...");
 
-  // configuracion del max 30102 - pulso
-  if (!particleSensor.begin(Wire, I2C_SPEED_STANDARD))
-  {
-    Serial.println("No se encontró MAX30102");
-    // display.println("MAX30102 ERROR");
-  }
-  else
-  {
-    Serial.println("MAX30102 OK");
-    // display.println("MAX30102 OK");
-    // display.display();
-    particleSensor.setup();
-    particleSensor.setPulseAmplitudeRed(0x0A);
-    particleSensor.setPulseAmplitudeGreen(0);
-  }
 
-  // configuracion del mpu--acelerometro-giroscopio
-  if (!mpu.begin())
-  {
-    Serial.println("No se encontró MPU6050");
-    while (1)
-    {
-      delay(10);
-    }
-  }
-  Serial.println("MPU6050 OK");
-  // conditional
-  mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
-  mpu.setGyroRange(MPU6050_RANGE_500_DEG);
-  mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+
+  // configuracion del mpu--acelerometro-giroscopi
 
 
   // configuracion inicar de la pantalla
