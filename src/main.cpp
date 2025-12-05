@@ -3,78 +3,202 @@
 #include <Adafruit_GFX.h>
 #include "MAX30105.h"         // Para MAX30102 (usa misma librería)
 #include "Adafruit_MPU6050.h" // Librería MPU6050
-#include <TinyGPSPlus.h>      // GPS
-#include <HardwareSerial.h>   // UART para GPS y SIM800L
-#include <DFRobotDFPlayerMini.h>
-#include <ArduinoHttpClient.h>
-#include <TinyGsmClient.h>
-#include <time.h>
+// #include <HardwareSerial.h>   // UART para GPS y SIM800L
+#include "spo2_algorithm.h"
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <math.h>
 #include <ArduinoJson.h>
 
-// configuraciones para pantalla
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 64
-// variables para gsm
-#define MODEM_RST 5
-#define MODEM_PWRKEY 4
-#define MODEM_POWER_ON 23
-#define MODEM_TX 27
-#define MODEM_RX 26
-#define MODEM_BAUD 9600
+MAX30105 particleSensor; // Sensor de pulso
 
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
-MAX30105 particleSensor;     // Sensor de pulso
-Adafruit_MPU6050 mpu;        // Acelerómetro/Giroscopio
-TinyGPSPlus gps;             // gps
-HardwareSerial SerialGPS(1); // UART1 para GPS
-                             // UART2 para GSM
-// Pines botones
-#define BTN1 0
-#define BTN2 1
 // buffers para el calculo de spo2 bpm
-#define BUFFER_SIZE 100
-uint32_t irBuffer[BUFFER_SIZE];
-uint32_t redBuffer[BUFFER_SIZE];
+#define MY_BUFFER_SIZE 100
+uint32_t irBuffer[MY_BUFFER_SIZE];
+uint32_t redBuffer[MY_BUFFER_SIZE];
 int32_t spo2;
 int8_t validSPO2;
 int32_t heartRate;
 int8_t validHeartRate;
 
-// para vinculacion
-String deviceId;
-bool vinculado = false;
-unsigned long lastCheck = 0;
-const unsigned long checkInterval = 5000;
-// configuracion de gsm
-const char apn[] = "entel.pe"; // segun operador
-const char user[] = "";
-const char pass[] = "";
+Adafruit_MPU6050 mpu; // Acelerómetro/Giroscopio
 
-TinyGsm modem(Serial1);
-TinyGsmClient client(modem);
+// variables de giro y aceleracion
+float ax, ay, az;
 
-// configuracion del httpclient
-const char server[] = "apucha-watch.com"; // sin http://
-const int port = 80;
-String backendUrl = "/api";
+// configuraciones para pantalla
 
-HttpClient http(client, server, port);
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+/*
+
+*/
+String deviceCode;
+
+bool isVinculed;
+
+const char *ssid = "OSWALDO";
+const char *password = "12345678";
+// para configurar hora
+const char *ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = -5 * 3600; // horario peru
+const int daylightOffset_sec = 0;
+
+void enviarSignosVitalesBackend(float bpm, float spo2);
+
+void enviarCaidaBackend();
+
+void verificarVinculo();
+
+String toBase36(uint32_t value);
+
+void taskVitalSign(void *parameter)
+{
+  for (;;)
+  {
+    const int N = 5; // n de promedios
+    float avgBPM = 0;
+    float avgSpO2 = 0;
+    int validCount = 0;
+
+    for (int n = 0; n < N; n++)
+    {
+      // --lectura en crudo
+      for (int i = 0; i < MY_BUFFER_SIZE; i++)
+      {
+        while (!particleSensor.available())
+        {
+          particleSensor.check();
+        }
+        redBuffer[i] = particleSensor.getRed();
+        irBuffer[i] = particleSensor.getIR();
+        particleSensor.nextSample();
+      }
+
+      // aplicar algoritmo de SparkFun
+      maxim_heart_rate_and_oxygen_saturation(
+          irBuffer, MY_BUFFER_SIZE, redBuffer,
+          &spo2, &validSPO2, &heartRate, &validHeartRate);
+
+      //  si es válida, acumular
+      if (validHeartRate && validSPO2 && spo2 > 70 && spo2 < 100)
+      {
+        avgBPM += heartRate;
+        avgSpO2 += spo2;
+        validCount++;
+      }
+
+      vTaskDelay(1000 / portTICK_PERIOD_MS); // espera entre lecturas
+    }
+
+    // promedio de lecturas validas
+    if (validCount > 0)
+    {
+      avgBPM /= validCount;
+      avgSpO2 /= validCount;
+
+      Serial.print("BPM promedio: ");
+      Serial.print(avgBPM, 1);
+      Serial.print(" | SpO2 promedio: ");
+      Serial.print(avgSpO2, 1);
+      Serial.println("%");
+      // enviar al backend
+      enviarSignosVitalesBackend(avgBPM, avgSpO2);
+      display.clearDisplay();
+      // titulo
+      display.setTextSize(1);
+      display.setCursor(10, 0);
+      display.println("Signos Vitales");
+      // linea separadora
+      display.drawLine(0, 10, 128, 10, SSD1306_WHITE);
+      // datos
+      display.setTextSize(2);
+      display.setCursor(10, 25);
+      display.print("BPM: ");
+      display.println((int)round(avgBPM));
+
+      display.setCursor(10, 50);
+      display.print("SpO2: ");
+      display.println((int)round(avgSpO2));
+      // mandamos a imprimir
+      display.display();
+    }
+    else
+    {
+      Serial.println("Lecturas no válidas, intentar de nuevo");
+    }
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+  }
+}
+
+void taskFall(void *parameter)
+{
+  for (;;)
+  {
+
+    // leemos aceleracion
+    sensors_event_t a,
+        g, temp;
+    mpu.getEvent(&a, &g, &temp);
+    float totalAcc = sqrt(pow(a.acceleration.x, 2) +
+                          pow(a.acceleration.y, 2) +
+                          pow(a.acceleration.z, 2));
+    Serial.print("Aceleracion total: ");
+    delay(500);
+    Serial.print(totalAcc);
+    delay(500);
+    Serial.print(" m/s^2 | ");
+
+    if (totalAcc < 2)
+    {
+      Serial.println("Posible caída libre detectada");
+      enviarCaidaBackend();
+      display.clearDisplay();
+      display.setCursor(10, 25);
+      display.println("Posible caída libre detectada");
+    }
+    else if (totalAcc > 15)
+    {
+      Serial.println("Impacto detectado, enviando alerta...");
+      enviarCaidaBackend();
+      display.clearDisplay();
+      display.setCursor(10, 25);
+      display.println("Impacto detectado, enviando alerta...");
+    }
+    vTaskDelay(200 / portTICK_PERIOD_MS);
+  }
+}
 
 void setup()
 {
   // iniciar puerto serial para debug
+  delay(5000);
   Serial.begin(115200);
-  // para gsm
-  Serial1.begin(MODEM_BAUD, SERIAL_8N1, MODEM_RX, MODEM_TX);
-  Serial.println("Iniciando sistema reloj...");
-  // intentamos buscar la pantalla
+
+Serial.println("Escaneando redes disponibles...");
+int n = WiFi.scanNetworks();
+for (int i = 0; i < n; i++) {
+  Serial.print(i + 1);
+  Serial.print(": ");
+  Serial.print(WiFi.SSID(i));
+  Serial.print(" (canal ");
+  Serial.print(WiFi.channel(i));
+  Serial.println(")");
+}
+
+  Wire.begin(8, 9, 100000);
+
+  
+
+
+    // intentamos buscar la pantalla
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C))
   {
     Serial.println("No se encontró pantalla OLED");
-    for (;;)
-      ; // bloquear si no se encuentra pantalla
   }
-  // configuracion inicar de la pantalla
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
@@ -82,20 +206,88 @@ void setup()
   display.println("OLED OK");
   display.display();
 
-  // configuracion de botones
-  pinMode(BTN1, INPUT_PULLUP);
-  pinMode(BTN2, INPUT_PULLUP);
+  byte error, direccion;
+  int dispositivos = 0;
+
+  Serial.println("Buscando dispositivos I2C...\n");
+
+  for (direccion = 1; direccion < 127; direccion++) {
+    Wire.beginTransmission(direccion);
+    error = Wire.endTransmission();
+
+    if (error == 0) {
+      Serial.print("Dispositivo encontrado en dirección: 0x");
+      display.print("Dispositivo encontrado en dirección: 0x");
+      Serial.println(direccion, HEX);
+      display.println(direccion, HEX);
+      display.display();
+      dispositivos++;
+      delay(5);
+    }
+    else if (error == 4) {
+      Serial.print("Error desconocido en dirección 0x");
+      Serial.println(direccion, HEX);
+    }
+  }
+
+  if (dispositivos == 0) {
+    Serial.println("\nNo se encontraron dispositivos I2C.");
+  } else {
+    Serial.println("\nEscaneo I2C completado.");
+  }
+
+  Serial.println("Conectando al WiFi...");
+  WiFi.begin(ssid, password);
+  Serial.println(ssid);
+  Serial.println(password);
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    Serial.print("Estado WiFi: ");
+    Serial.println(WiFi.status());
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("");
+  Serial.println("WiFi conectado");
+  Serial.print("Dirección IP: ");
+  Serial.println(WiFi.localIP());
+
+  // configurar ntp
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+
+  // obtenemos hora
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo))
+  {
+    Serial.println("Error al obtener la hora");
+    return;
+  }
+
+  Serial.println("Hora sincronizada correctamente:");
+  Serial.println(&timeinfo, "%A, %d %B %Y %H:%M:%S");
+
+  // para chip id
+  uint64_t chipid = ESP.getEfuseMac();
+  deviceCode = toBase36(chipid);
+  Serial.print("Codigo generado");
+  Serial.print(deviceCode);
+
+  Serial.println("Iniciando sistema reloj...");
+
+  Serial.println("\nEscaneo I2C iniciado...");
 
   // configuracion del max 30102 - pulso
   if (!particleSensor.begin(Wire, I2C_SPEED_STANDARD))
   {
     Serial.println("No se encontró MAX30102");
+    // display.println("MAX30102 ERROR");
   }
   else
   {
     Serial.println("MAX30102 OK");
-    display.println("MAX30102 OK");
-    display.display();
+    // display.println("MAX30102 OK");
+    // display.display();
     particleSensor.setup();
     particleSensor.setPulseAmplitudeRed(0x0A);
     particleSensor.setPulseAmplitudeGreen(0);
@@ -111,260 +303,215 @@ void setup()
     }
   }
   Serial.println("MPU6050 OK");
-  display.println("MPU6050 OK");
-  display.display();
-
-  // configurar rangos
+  // conditional
   mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
   mpu.setGyroRange(MPU6050_RANGE_500_DEG);
   mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
 
-  // configuracion del gps
-  SerialGPS.begin(9600, SERIAL_8N1, 4, 5); // rx tx
-  Serial.println("GPS inicializado");
-  display.println("GPS OK");
-  display.display();
 
-  // configuracion del gps
-  SerialGSM.begin(9600, SERIAL_8N1, 6, 7); // rx tx
-  Serial.println("SIM800L inicializado");
-  display.println("GSM OK");
-  display.display();
-  // configuracion del dfplayer mini
-  HardwareSerial SerialDF(1); // UART 1
-  DFRobotDFPlayerMini dfplayer;
-  SerialDF.begin(9600, SERIAL_8N1, 8, 9); // rx tx
-  delay(1000);
-  if (!dfplayer.begin(SerialDF))
-  {
-    Serial.println("DFPlayer no detectado!");
-  }
-  else
-  {
-    Serial.println("DFPlayer listo");
-    dfplayer.volume(20); // volumen inicial
-  }
-  // para chip id
-  uint64_t chipid = ESP.getEfuseMac();
-  char idStr[13];
-  sprintf(idStr, "%04X%08X", (uint16_t)(chipid >> 32), (uint32_t)chipid);
-  deviceId = String(idStr);
-  Serial.println("Device ID: " + deviceId);
-
-  // iniciamos modem
-  Serial.println("Iniciando módem...");
-  modem.restart();
-  if (!modem.waitForNetwork())
-  {
-    Serial.println("No hay red GSM");
-    return;
-  }
-  if (!modem.gprsConnect(apn, user, pass))
-  {
-    Serial.println("Fallo al conectar GPRS");
-    return;
-  }
-  Serial.println("GPRS conectado");
-
-  delay(2000);
+  // configuracion inicar de la pantalla
   display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.println("OLED OK");
+  display.display();
+  display.clearDisplay();
+  display.setCursor(0, 0);
+  display.print("Codigo:");
+  display.setTextSize(2);
+  int16_t x1, y1;
+  uint16_t w, h;
+
+  // calcular el tamaño del texto
+  display.getTextBounds(deviceCode, 0, 0, &x1, &y1, &w, &h);
+
+  // coordenadas
+  int x = (SCREEN_WIDTH - w) / 2;
+  int y = (SCREEN_HEIGHT - h) / 2;
+
+  // Posiciona y escribe el texto
+  display.setCursor(x, y);
+  Serial.println("Codigo:");
+  display.println(deviceCode);
+  display.display();
+  while (!isVinculed)
+  {
+    verificarVinculo();
+    delay(4000);
+  }
+  display.clearDisplay();
+  display.setCursor(0,0);
+  Serial.println("Vinculo verificado");
+  display.println("Vinculo verificado");
+  display.display();
+  /*
+  display.clearDisplay();*/
+  xTaskCreate(taskVitalSign, "SignosVitales", 8192, NULL, 1, NULL);
+  xTaskCreate(taskFall, "Caida", 8192, NULL, 1, NULL);
 }
 void loop()
 {
+  /*
+  byte error, address;
+  int nDevices = 0;
 
-  unsigned long now = millis();
-  if (!vinculado && now - lastCheck > = checkInterval)
-  {
-    lastCheck = now;
-    verificarVinculo();
+  for (address = 1; address < 127; address++) {
+    Wire.beginTransmission(address);
+    error = Wire.endTransmission();
+
+    if (error == 0) {
+      Serial.print("Dispositivo I2C encontrado en la direccion 0x");
+      if (address < 16)
+        Serial.print("0");
+      Serial.print(address, HEX);
+      Serial.println(" !");
+      nDevices++;
+    } else if (error == 4) {
+      Serial.print("Error desconocido en la direccion 0x");
+      if (address < 16)
+        Serial.print("0");
+      Serial.println(address, HEX);
+    }
   }
 
-  // limpiamos pantalla
-  display.clearDisplay();
-  display.setCursor(0, 0);
-  if (!vinculado)
-  {
-    display.println('No vinculado');
-    display.println('Codigo:');
-    display.println(deviceId);
-  }
+  if (nDevices == 0)
+    Serial.println("No se encontraron dispositivos I2C\n");
   else
-  {
-    // print para debug
-    Serial.println('Vinculado')
-        // mostrar hora en pantalla
-        time_t now = time(NULL);
-    struct tm *timeinfo = localtime(&now);
-    char buffer[30];
-    strftime(buffer, 30, "%H:%M:%S", timeinfo);
-    Serial.println(buffer);
-    display.println(buffer);
-    // leemos aceleracion
-    sensors_event_t a,
-        g, temp;
-    mpu.getEvent(&a, &g, &temp);
-    float totalAcc = sqrt(pow(a.acceleration.x, 2) +
-                          pow(a.acceleration.y, 2) +
-                          pow(a.acceleration.z, 2));
-
-    // leemos datos en crudo para sp02 y bpm
-    for (int i = 0; i < BUFFER_SIZE; i++)
-    {
-      while (!particleSensor.available())
-      {
-        particleSensor.check();
-      }
-      redBuffer[i] = particleSensor.getRed();
-      irBuffer[i] = particleSensor.getIR();
-      particleSensor.nextSample();
-    }
-
-    // algoritmo proporcionado por sparkfun
-    //  Algoritmo de SparkFun
-    maxim_heart_rate_and_oxygen_saturation(
-        irBuffer, BUFFER_SIZE, redBuffer,
-        &spo2, &validSPO2, &heartRate, &validHeartRate);
-
-    // imprimimos para depurar
-    Serial.print("BPM: ");
-    Serial.print(heartRate);
-    Serial.print(validHeartRate ? "valido" : "no valido");
-    Serial.print(" | SpO2: ");
-    Serial.print(spo2);
-    Serial.println(validSPO2 ? "%" : " no valido");
-
-    // deteccion de caida por rangos
-    if (totalAcc < 2)
-    {
-      Serial.println("Posible caída libre detectada");
-    }
-    else if (totalAcc > 20)
-    {
-      Serial.println("Impacto detectado, enviando alerta...");
-      enviarCaidaBackend(heartRate, spo2);
-    }
-    delay(1000);
-    enviarVitalSignsBackend(heartRate, spo2)
-  }
-  display.display();
-
-  delay(500);
+    Serial.println("Escaneo completado.\n");*/
 }
 
-// funcion para verificar
-
-void verificarVinculo()
+void mostrarSignosVitalesPantalla(float bpm, float spo2)
 {
-  String url = backendUrl + "/verificar" + "?deviceId=" + deviceId;
-  Serial.println("Haciendo request a: " + url);
-  http.get(url);
+}
 
-  int statusCode = http.responseStatusCode();
-  String response = http.responseBody();
-
-  if (statusCode == 200)
+void enviarSignosVitalesBackend(float bpm, float spo2)
+{
+  if (WiFi.status() == WL_CONNECTED)
   {
-    Serial.println('Respuesta:' + response);
-    // para deserializar respuesta
-    StaticJsonDocument<256> doc;
-    DeserializationError error = deserializeJson(doc, response);
-    if (error)
+    HTTPClient http;
+
+    String server = "https://apucha-watch-backend-1094750444303.us-west1.run.app/vital-signs";
+    http.begin(server);
+    http.addHeader("Content-Type", "application/json");
+
+    String json = "{\"deviceCode\": \"" + deviceCode + "\", \"heartRate\": " + String(round(bpm)) +
+                  ", \"oxygenSaturation\": " + String(round(spo2)) + "}";
+
+    int httpResponseCode = http.POST(json);
+
+    if (httpResponseCode > 0)
     {
-      Serial.print("Error al parsear JSON: ");
-      Serial.println(error.c_str());
-      return;
-      vinculado = false;
-    }
-    //valores
-    bool vinculadoResponse = doc["vinculado"];
-    const char *hora = doc["hora"];
-    if (vinculadoResponse)
-    {
-      vinculado = true;
-      // sincronizar hora
-      setTimeFromServer(*hora);
+      Serial.print("Código de respuesta: ");
+      Serial.println(httpResponseCode);
+      String respuesta = http.getString();
+      Serial.println(respuesta);
     }
     else
     {
-      vinculado = false;
+      Serial.print("Error en POST: ");
+      Serial.println(httpResponseCode);
     }
+
+    http.end();
   }
   else
   {
-    Serial.println("Error HTTP: " String(statusCode);)
+    Serial.println("WiFi desconectado");
   }
-  http.stop()
 }
 
-// funcion para enviar signos vitales
-
-void enviarVitalSignsBackend(int bpm, int spo2)
+void enviarCaidaBackend()
 {
-  String url = "/api/vital-signs"; // Ruta en tu backend
-  String contentType = "application/json";
-  String body = "{\"bpm\":" + String(bpm) + ",\"spo2\":" + String(spo2) + "}";
-
-  // para debug
-  Serial.println("POST: " + url);
-  Serial.println("BODY: " + body);
-
-  http.post(url, contentType, body);
-
-  int responseStatus = http.responseStatusCode();
-  int response = http.responseBody();
-
-  if (statusCode == 200)
+  if (WiFi.status() == WL_CONNECTED)
   {
-    Serial.println("Respuesta: " + response);
+    HTTPClient http;
+
+    String server = "https://apucha-watch-backend-1094750444303.us-west1.run.app/fall";
+    http.begin(server);
+    http.addHeader("Content-Type", "application/json");
+
+    String json = "{\"deviceCode\": \"" + deviceCode + "\"}";
+
+    int httpResponseCode = http.POST(json);
+
+    if (httpResponseCode > 0)
+    {
+      Serial.print("Código de respuesta: ");
+      Serial.println(httpResponseCode);
+      String respuesta = http.getString();
+      Serial.println(respuesta);
+    }
+    else
+    {
+      Serial.print("Error en POST: ");
+      Serial.println(httpResponseCode);
+    }
+
+    http.end();
   }
   else
   {
-    Serial.println("Error POST: " + String(statusCode));
+    Serial.println("WiFi desconectado");
   }
-
-  http.stop();
 }
 
-void enviarCaidaBackend(float totalAcc)
+void verificarVinculo()
 {
-  String url = "/api/fall"; // Ruta en tu backend
-  String contentType = "application/json";
-
-  String body = "{\"acc\":" + String(totalAcc) + "}";
-  // para debug
-  Serial.println("POST: " + url);
-  Serial.println("BODY: " + body);
-
-  http.post(url, contentType, body);
-
-  int responseStatus = http.responseStatusCode();
-  int response = http.responseBody();
-
-  if (statusCode == 200)
+  if (WiFi.status() == WL_CONNECTED)
   {
-    Serial.println("Respuesta: " + response);
+    HTTPClient http;
+
+    String server = "https://apucha-watch-backend-1094750444303.us-west1.run.app/devices/exist-by-code/" + deviceCode;
+    http.begin(server);
+    http.addHeader("Content-Type", "application/json");
+    int httpResponseCode = http.GET();
+
+    if (httpResponseCode > 0)
+    {
+      Serial.print("Código de respuesta: ");
+      Serial.println(httpResponseCode);
+      String respuesta = http.getString();
+      Serial.println(respuesta);
+      // deserializamos json
+      JsonDocument doc;
+      DeserializationError error = deserializeJson(doc, respuesta);
+      if (!error)
+      {
+        isVinculed = doc["exist"];
+        Serial.println("Esta vinculado");
+        Serial.println(isVinculed);
+      }
+      else
+      {
+        Serial.println("Error al pasear json");
+        Serial.println(error.c_str());
+      }
+    }
+    else
+    {
+      Serial.print("Error en POST: ");
+      Serial.println(httpResponseCode);
+    }
+
+    http.end();
   }
   else
   {
-    Serial.println("Error POST: " + String(statusCode));
+    Serial.println("WiFi desconectado");
   }
-
-  http.stop();
 }
 
-// funcion para configurar hora a partir de la repuesta del backend
-void setTimeFromServer(String horaServidor)
-{
-  struct tm tm;
-  if (strptime(horaServidor.c_str(), "%Y-%m-%dT%H:%M:%SZ", &tm) != NULL)
-  {
-    time_t t = mktime(&tm);
-    struct timeval tv = {.tv_sec = t, .tv_usec = 0};
-    settimeofday(&tv, NULL);
-    Serial.println("Hora sincronizada")
+String toBase36(uint32_t value) {
+  String result = "";
+  const char* digits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+  if (value == 0) return "0";
+
+  while (value > 0) {
+    result = digits[value % 36] + result;
+    value /= 36;
   }
-  else
-  {
-    Serial.println("Error parceando la hora")
-  }
+
+  return result;
 }
