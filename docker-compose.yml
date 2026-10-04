@@ -25,8 +25,8 @@ services:
       - DOCKER_INFLUXDB_INIT_USERNAME=admin
       - DOCKER_INFLUXDB_INIT_PASSWORD=adminpassword123
       - DOCKER_INFLUXDB_INIT_ORG=utp
-      - DOCKER_INFLUXDB_INIT_BUCKET=iot_temperatura
-      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=miSuperToken123456789
+      - DOCKER_INFLUXDB_INIT_BUCKET=iot_salud
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=IEUWQHRIUW93842374
     volumes:
       - influxdb_data:/var/lib/influxdb2
     networks:

@@ -15,7 +15,7 @@ const char *ssid = "OSWALDO";
 const char *password = "12345678";
 
 // IP local de tu PC (donde corre Docker EMQX)
-const char *mqtt_server = "192.168.1.50"; 
+const char *mqtt_server = "192.168.18.25"; 
 const int mqtt_port = 1883;
 
 // Tópicos MQTT para tus sensores
