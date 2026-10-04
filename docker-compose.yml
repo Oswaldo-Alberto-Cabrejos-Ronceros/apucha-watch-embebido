@@ -1,19 +1,17 @@
 version: '3.8'
 
 services:
-  # 1. Broker MQTT solicitado en la guía
   emqx:
     image: emqx/emqx:latest
     container_name: emqx_broker
     restart: always
     ports:
-      - "1883:1883"       # Puerto estándar MQTT (donde publica tu ESP32)
+      - "1883:1883"       # Puerto estándar MQTT
       - "8083:8083"       # Puerto MQTT WebSocket
       - "18083:18083"     # Dashboard web de EMQX (admin / public)
     networks:
       - red_iot
 
-  # 2. Base de datos para almacenar las lecturas de los sensores
   influxdb:
     image: influxdb:2.7
     container_name: influxdb
@@ -25,14 +23,13 @@ services:
       - DOCKER_INFLUXDB_INIT_USERNAME=admin
       - DOCKER_INFLUXDB_INIT_PASSWORD=adminpassword123
       - DOCKER_INFLUXDB_INIT_ORG=utp
-      - DOCKER_INFLUXDB_INIT_BUCKET=iot_temperatura
-      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=miSuperToken123456789
+      - DOCKER_INFLUXDB_INIT_BUCKET=iot_salud
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=IEUWQHRIUW93842374
     volumes:
       - influxdb_data:/var/lib/influxdb2
     networks:
       - red_iot
 
-  # 3. Plataforma de visualización en tiempo real
   grafana:
     image: grafana/grafana:latest
     container_name: grafana
