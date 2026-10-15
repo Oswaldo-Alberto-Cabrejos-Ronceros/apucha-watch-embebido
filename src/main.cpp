@@ -11,8 +11,8 @@
 #include <math.h>
 
 // --- Credenciales Wi-Fi y Broker MQTT ---
-const char *ssid = "OSWALDO";
-const char *password = "12345678";
+const char *ssid = "";
+const char *password = "";
 
 // IP local de tu PC (donde corre Docker EMQX)
 const char *mqtt_server = "192.168.18.25"; 
